@@ -73,4 +73,172 @@ VMI - Virtual Machine Interface 모드 -> 가상 머신의 메모리 덤프를 �
 [<a href="https://github.com/Wenzel/r2vmi?tab=readme-ov-file" target="_blank">r2vmi github</a>]
 
 ## Classic EPT Hook [ Hidden Breakpoint ] 
-EPT 
+
+..
+
+
+
+# Code Analyze
+
+## VM EXIT - EPT_VIOLATION
+[<a href="https://github1s.com/nks0005/HyperDbg/blob/master/hyperdbg_/hyperdbg/hprdbghv/code/vmm/vmx/Vmexit.c#L85" target="_blank">vm exit</a>]
+1. VM EXIT > EPT_VIOLATION 흐름
+
+EPT Violation 발생
+VM EXIT > VM EXIT Handler 호출
+이때 인자로 guest의 레지스터 정보들이 인자로 들어옴
+
+guest로 넘어올때 기본적으로 cpu의 레지스트리에 저장됨 > 이를 함수로 호출하기 위해 스택에 넣는 asm 코드 작업이 필요함
+[<a href="https://github1s.com/nks0005/HyperDbg/blob/master/_hyperdbg/hyperdbg/hprdbghv/code/assembly/AsmVmexitHandler.asm">asm 코드</>]
+
+
+** VM EXIT가 발생하면 VMM은 guest의 eip를 조정해줘야함 > 안그럼 무한 루프에 빠짐 **
+
+```c
+typedef struct GUEST_REGS
+{
+    //
+    // DO NOT FUCKING TOUCH THIS STRUCTURE WITHOUT COORDINATION WITH SINA
+    //
+
+    UINT64 rax; // 0x00
+    UINT64 rcx; // 0x08
+    UINT64 rdx; // 0x10
+    UINT64 rbx; // 0x18
+    UINT64 rsp; // 0x20
+    UINT64 rbp; // 0x28
+    UINT64 rsi; // 0x30
+    UINT64 rdi; // 0x38
+    UINT64 r8;  // 0x40
+    UINT64 r9;  // 0x48
+    UINT64 r10; // 0x50
+    UINT64 r11; // 0x58
+    UINT64 r12; // 0x60
+    UINT64 r13; // 0x68
+    UINT64 r14; // 0x70
+    UINT64 r15; // 0x78
+
+    //
+    // DO NOT FUCKING TOUCH THIS STRUCTURE WITHOUT COORDINATION WITH SINA
+    //
+
+} GUEST_REGS, *PGUEST_REGS;
+```
+
+switch 문을 통해 EPT_VIOLATION 인지 확인함
+
+VCpu = Virtual Machine State 구조체 (==? VMCS)
+https://github1s.com/nks0005/HyperDbg/blob/master/_hyperdbg/hyperdbg/hprdbghv/header/common/State.h#L285-L339
+
+
+```c
+VmxVmexitHandler(_Inout_ PGUEST_REGS GuestRegs)
+    ...
+
+    case VMX_EXIT_REASON_EPT_VIOLATION:
+    {
+        if (EptHandleEptViolation(VCpu) == FALSE)
+        {
+            LogError("Err, there were errors in handling EPT violation");
+        }
+
+        break;
+    }
+```
+
+EptHandleEptViolation > TRUE의 경우 의도한 EPT Violation ( ept 훅 등... )
+
+
+
+VCpu의 ExitQualification 값을 이용하여 무슨 violation 종류인지 값을 담음]
+VMX_EXIT_QUALIFICATION_EPT_VIOLATION 구조체
+https://github1s.com/nks0005/HyperDbg/blob/master/_hyperdbg/hyperdbg/dependencies/ia32-doc/out/ia32.h#L18596-L18790
+
+총 17개 종류가 있음 - 각 1비트로 계산됨
+    ReadAccess: 데이터 읽기 액세스가 EPT 위반의 원인인 경우 설정됩니다.
+    WriteAccess: 데이터 쓰기 액세스가 EPT 위반의 원인인 경우 설정됩니다.
+    ExecuteAccess: 명령어 실행이 EPT 위반의 원인인 경우 설정됩니다.
+    EptReadable: EPT 위반의 원인이 된 가상 주소가 읽기 가능한지 여부를 나타냅니다.
+    EptWriteable: EPT 위반의 원인이 된 가상 주소가 쓰기 가능한지 여부를 나타냅니다.
+    EptExecutable: EPT 위반의 원인이 된 가상 주소가 실행 가능한지 여부를 나타냅니다.
+    EptExecutableForUserMode: 사용자 모드 선형 주소에서 실행 가능한지 여부를 나타냅니다.
+    ValidGuestLinearAddress: 게스트 선형 주소 필드가 유효한지 여부를 나타냅니다.
+    CausedByTranslation: 주소 변환에 의해 EPT 위반이 발생한 경우 설정됩니다.
+    UserModeLinearAddress: 사용자 모드 선형 주소 여부를 나타냅니다.
+    ReadableWritablePage: 읽기/쓰기 가능한 페이지인지 여부를 나타냅니다.
+    ExecuteDisablePage: 실행 비활성 페이지 여부를 나타냅니다.
+    NmiUnblocking: IRET으로 인한 NMI 언블로킹 여부를 나타냅니다.
+    ShadowStackAccess: 쉐도우 스택 액세스 여부를 나타냅니다.
+    SupervisorShadowStack: 슈퍼바이저 쉐도우 스택 여부를 나타냅니다.
+    GuestPagingVerification: 게스트 페이징 확인 여부를 나타냅니다.
+    AsynchronousToInstruction: 명령어 실행과 비동기적으로 관련된 액세스 여부를 나타냅니다.
+
+```c
+BOOLEAN
+EptHandleEptViolation(VIRTUAL_MACHINE_STATE * VCpu)
+{
+    UINT64                               GuestPhysicalAddr;
+    VMX_EXIT_QUALIFICATION_EPT_VIOLATION ViolationQualification = {.AsUInt = VCpu->ExitQualification};
+
+    //
+    // Reading guest physical address
+    //
+    __vmx_vmread(VMCS_GUEST_PHYSICAL_ADDRESS, &GuestPhysicalAddr);
+   
+```
+
+https://ocw.snu.ac.kr/sites/default/files/NOTE/2566.pdf
+
+
+ExecTrapHandleEptViolationVmexit > MBEC (Monitor Mode Execution Control) 후킹과 관련된 EPT (Extended Page Tables) 위반을 처리하는 데 사용
+
+MBEC?
+    
+```c
+    if (ExecTrapHandleEptViolationVmexit(VCpu, &ViolationQualification))
+    {
+        return TRUE;
+    }
+    else if (EptHandlePageHookExit(VCpu, ViolationQualification, GuestPhysicalAddr))
+    {
+        //
+        // Handled by page hook code
+        //
+        return TRUE;
+    }
+    else if (VmmCallbackUnhandledEptViolation(VCpu->CoreId, (UINT64)ViolationQualification.AsUInt, GuestPhysicalAddr))
+    {
+        //
+        // Check whether this violation is meaningful for the application or not
+        //
+        return TRUE;
+    }
+
+    LogError("Err, unexpected EPT violation at RIP: %llx", VCpu->LastVmexitRip);
+    DbgBreakPoint();
+    //
+    // Redo the instruction that caused the exception
+    //
+    return FALSE;
+}
+```
+
+## VM EXIT - VM CALL? 
+
+hyperdbg
+```c
+    case VMX_EXIT_REASON_EXECUTE_VMCALL:
+    {
+        //
+        // Handle vm-exits of VMCALLs
+        //
+        DispatchEventVmcall(VCpu);
+
+        break;
+    }
+```
+
+cheat_engine
+```c
+
+```

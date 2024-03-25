@@ -192,7 +192,10 @@ https://ocw.snu.ac.kr/sites/default/files/NOTE/2566.pdf
 
 ExecTrapHandleEptViolationVmexit > MBEC (Monitor Mode Execution Control) 후킹과 관련된 EPT (Extended Page Tables) 위반을 처리하는 데 사용
 
-MBEC?
+MBEC -> 실제 물리 메모리를 등록해서 해당 물리 메모리를 모니터링 -> 트랩 발생 ( EPT VIOLATION ? ) 
+    epthook2 기능이 아닐지?
+
+
     
 ```c
     if (ExecTrapHandleEptViolationVmexit(VCpu, &ViolationQualification))

@@ -3,6 +3,35 @@
 
 
 
+# 빌드
+1. https://docs.hyperdbg.org/getting-started/build-and-install 
+순서대로 visual studio > windows sdk > wdk 설치 
+
+build 폴더에서 MAKE 실행
+
+
+
+2. 원격 연결 ( 시리얼 포트 설정 : \\.\pipe\HyperDbgPipe)
+VM 내부 > .debug prepare serial 115200 com1 
+호스트 > .debug remote namedpipe \\.\pipe\HyperDbgPipe
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 ## Unique Features
 ### First Release (v0.1.0.0)
 * Advanced Hypervisor-based Kernel Mode Debugger [<a href="https://docs.hyperdbg.org/using-hyperdbg/kernel-mode-debugging" target="_blank">link</a>][<a href="https://docs.hyperdbg.org/getting-started/attach-to-hyperdbg/debug" target="_blank">link</a>][<a href="https://docs.hyperdbg.org/getting-started/attach-to-hyperdbg/local-debugging" target="_blank">link</a>]
